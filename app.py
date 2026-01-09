@@ -50,6 +50,7 @@ def remove_background_full(image: Image.Image) -> Image.Image:
 def find_sticker_contours(image_rgba: Image.Image, min_area: int = MIN_CONTOUR_AREA) -> List[Tuple[int, int, int, int]]:
     """
     分析 Alpha 通道，找出所有非透明區域的邊界框。
+    使用增強的形態學操作和邊界框合併來避免一個貼圖被分成多個部分。
     
     Args:
         image_rgba: 已去背的 RGBA 圖片
@@ -65,9 +66,19 @@ def find_sticker_contours(image_rgba: Image.Image, min_area: int = MIN_CONTOUR_A
     # 二值化 Alpha 通道
     _, binary = cv2.threshold(alpha_channel, 10, 255, cv2.THRESH_BINARY)
     
-    # 形態學操作：閉運算填補小孔洞
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    # 增強形態學操作：使用較大的核心進行閉運算，連接相鄰區域
+    # 根據圖片大小動態調整核心尺寸
+    img_height, img_width = binary.shape
+    kernel_size = max(15, min(img_width, img_height) // 50)  # 動態核心大小
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    
+    # 先膨脹再侵蝕（閉運算），填補貼圖內部的空隙
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    
+    # 額外的膨脹操作，確保相近的區域能連接在一起
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size // 2, kernel_size // 2))
+    binary = cv2.dilate(binary, dilate_kernel, iterations=2)
+    binary = cv2.erode(binary, dilate_kernel, iterations=2)
     
     # 找出輪廓
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -80,10 +91,82 @@ def find_sticker_contours(image_rgba: Image.Image, min_area: int = MIN_CONTOUR_A
             x, y, w, h = cv2.boundingRect(contour)
             bounding_boxes.append((x, y, w, h))
     
+    # 合併重疊或相近的邊界框
+    bounding_boxes = merge_overlapping_boxes(bounding_boxes, img_width, img_height)
+    
     # 按照位置排序（先上後下，先左後右）
-    bounding_boxes.sort(key=lambda box: (box[1] // 50, box[0]))
+    # 使用較大的行高閾值來正確分組
+    row_height = img_height // 10 if img_height > 0 else 50
+    bounding_boxes.sort(key=lambda box: (box[1] // row_height, box[0]))
     
     return bounding_boxes
+
+
+def merge_overlapping_boxes(boxes: List[Tuple[int, int, int, int]], 
+                            img_width: int, img_height: int) -> List[Tuple[int, int, int, int]]:
+    """
+    合併重疊或相近的邊界框。
+    
+    Args:
+        boxes: 邊界框列表 [(x, y, w, h), ...]
+        img_width: 圖片寬度
+        img_height: 圖片高度
+        
+    Returns:
+        合併後的邊界框列表
+    """
+    if not boxes:
+        return boxes
+    
+    # 設定合併距離閾值（圖片較小邊的 5%）
+    merge_threshold = max(20, min(img_width, img_height) // 20)
+    
+    merged = True
+    while merged:
+        merged = False
+        new_boxes = []
+        used = [False] * len(boxes)
+        
+        for i in range(len(boxes)):
+            if used[i]:
+                continue
+                
+            x1, y1, w1, h1 = boxes[i]
+            # 擴大邊界框用於重疊檢測
+            expanded_x1 = x1 - merge_threshold
+            expanded_y1 = y1 - merge_threshold
+            expanded_x2 = x1 + w1 + merge_threshold
+            expanded_y2 = y1 + h1 + merge_threshold
+            
+            for j in range(i + 1, len(boxes)):
+                if used[j]:
+                    continue
+                    
+                x2, y2, w2, h2 = boxes[j]
+                
+                # 檢查擴大後的邊界框是否重疊
+                if (expanded_x1 < x2 + w2 and expanded_x2 > x2 and
+                    expanded_y1 < y2 + h2 and expanded_y2 > y2):
+                    # 合併兩個邊界框
+                    new_x = min(x1, x2)
+                    new_y = min(y1, y2)
+                    new_x2 = max(x1 + w1, x2 + w2)
+                    new_y2 = max(y1 + h1, y2 + h2)
+                    x1, y1, w1, h1 = new_x, new_y, new_x2 - new_x, new_y2 - new_y
+                    # 更新擴大範圍
+                    expanded_x1 = x1 - merge_threshold
+                    expanded_y1 = y1 - merge_threshold
+                    expanded_x2 = x1 + w1 + merge_threshold
+                    expanded_y2 = y1 + h1 + merge_threshold
+                    used[j] = True
+                    merged = True
+            
+            new_boxes.append((x1, y1, w1, h1))
+            used[i] = True
+        
+        boxes = new_boxes
+    
+    return boxes
 
 
 def crop_stickers(original_image: Image.Image, bounding_boxes: List[Tuple[int, int, int, int]]) -> List[Image.Image]:
