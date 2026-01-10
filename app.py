@@ -337,7 +337,10 @@ def main():
                                               help="勾選後會使用 rembg 移除每張貼圖的背景")
                     
                     if st.button("🚀 開始處理", type="primary", use_container_width=True, key="grid_btn"):
-                        process_grid_mode(original_image, cols, rows, apply_rembg)
+                        processed = process_grid_mode(original_image, cols, rows, apply_rembg)
+                        if processed:
+                            st.session_state['processed_stickers'] = processed
+                            st.rerun()
                 
                 else:
                     with st.expander("進階參數調整", expanded=False):
@@ -345,7 +348,19 @@ def main():
                         min_area_percent = st.slider("最小面積百分比 (%)", 0.1, 5.0, 0.5, 0.1)
                     
                     if st.button("🚀 開始處理", type="primary", use_container_width=True, key="auto_btn"):
-                        process_auto_mode(original_image, dilation_size, min_area_percent)
+                        processed = process_auto_mode(original_image, dilation_size, min_area_percent)
+                        if processed:
+                            st.session_state['processed_stickers'] = processed
+                            st.rerun()
+        
+        # 顯示處理結果（從 session_state 讀取）
+        if 'processed_stickers' in st.session_state and st.session_state['processed_stickers']:
+            display_results(st.session_state['processed_stickers'])
+            
+            # 清除按鈕
+            if st.button("🗑️ 清除結果，重新處理", key="clear_results"):
+                del st.session_state['processed_stickers']
+                st.rerun()
     
     # ========================================
     # Tab 2: 主要圖片/標籤圖片轉換功能（新功能）
@@ -494,7 +509,7 @@ def process_grid_mode(original_image: Image.Image, cols: int, rows: int, apply_r
         progress_bar.progress(100)
         status_text.text("✅ 處理完成！")
     
-    display_results(processed_stickers)
+    return processed_stickers
 
 
 def process_auto_mode(original_image: Image.Image, dilation_size: int, min_area_percent: float):
@@ -515,7 +530,7 @@ def process_auto_mode(original_image: Image.Image, dilation_size: int, min_area_
             image_nobg = remove_background_full(original_image)
         except Exception as e:
             st.error(f"❌ 去背處理失敗: {str(e)}")
-            return
+            return None
         
         progress_bar.progress(30)
         
@@ -526,7 +541,7 @@ def process_auto_mode(original_image: Image.Image, dilation_size: int, min_area_
         
         if len(bounding_boxes) == 0:
             st.error("❌ 無法偵測到任何貼圖！建議改用「網格分割」模式。")
-            return
+            return None
         
         st.success(f"✅ 偵測到 **{len(bounding_boxes)}** 個貼圖區域")
         
@@ -548,7 +563,7 @@ def process_auto_mode(original_image: Image.Image, dilation_size: int, min_area_
         progress_bar.progress(100)
         status_text.text("✅ 處理完成！")
     
-    display_results(processed_stickers)
+    return processed_stickers
 
 
 def display_results(processed_stickers: List[Image.Image]):
@@ -559,9 +574,6 @@ def display_results(processed_stickers: List[Image.Image]):
     st.subheader(f"🎉 處理結果：共 {len(processed_stickers)} 張貼圖")
     
     if processed_stickers:
-        # 將處理後的貼圖存入 session_state
-        st.session_state['processed_stickers'] = processed_stickers
-        
         cols_per_row = 5
         for row_start in range(0, len(processed_stickers), cols_per_row):
             cols = st.columns(cols_per_row)
