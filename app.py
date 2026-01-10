@@ -615,76 +615,57 @@ def display_results(processed_stickers: List[Image.Image]):
                 key="tab_selection"
             )
         
-        # 預覽與轉換
-        if st.button("🚀 產生 main.png 與 tab.png", type="primary", use_container_width=True, key="generate_icons_btn"):
-            generate_icons_from_stickers(processed_stickers, main_selection, tab_selection)
-
-
-def generate_icons_from_stickers(stickers: List[Image.Image], main_idx: int, tab_idx: int):
-    """
-    從分割後的貼圖產生主要圖片和標籤圖片。
-    """
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    # 產生主要圖片
-    status_text.text("⏳ 產生主要圖片 (240 x 240)...")
-    progress_bar.progress(30)
-    main_image = resize_to_main(stickers[main_idx], apply_rembg=False)  # 已去背，不需再次處理
-    
-    # 產生標籤圖片
-    status_text.text("⏳ 產生聊天室標籤圖片 (96 x 74)...")
-    progress_bar.progress(60)
-    tab_image = resize_to_tab(stickers[tab_idx], apply_rembg=False)  # 已去背，不需再次處理
-    
-    progress_bar.progress(100)
-    status_text.text("✅ 產生完成！")
-    
-    # 顯示結果
-    st.divider()
-    st.subheader("🎉 主要圖片 / 標籤圖片產生結果")
-    
-    result_col1, result_col2 = st.columns(2)
-    
-    with result_col1:
-        st.markdown(f"**🖼️ 主要圖片 (main.png)**")
-        st.caption(f"來源: #{main_idx + 1} | 尺寸: {LINE_MAIN_WIDTH} x {LINE_MAIN_HEIGHT} px")
-        st.image(main_image, use_container_width=True)
+        # 即時產生並顯示預覽與下載按鈕
+        st.divider()
+        st.subheader("📥 預覽與下載")
         
-        # 下載按鈕
-        main_buffer = io.BytesIO()
-        main_image.save(main_buffer, format='PNG')
-        main_buffer.seek(0)
+        result_col1, result_col2 = st.columns(2)
         
-        st.download_button(
-            label="📥 下載 main.png",
-            data=main_buffer.getvalue(),
-            file_name="main.png",
-            mime="image/png",
-            use_container_width=True,
-            key="download_main_from_stickers"
-        )
-    
-    with result_col2:
-        st.markdown(f"**💬 聊天室標籤圖片 (tab.png)**")
-        st.caption(f"來源: #{tab_idx + 1} | 尺寸: {LINE_TAB_WIDTH} x {LINE_TAB_HEIGHT} px")
-        st.image(tab_image, use_container_width=True)
+        # 產生主要圖片
+        main_image = resize_to_main(processed_stickers[main_selection], apply_rembg=False)
+        # 產生標籤圖片
+        tab_image = resize_to_tab(processed_stickers[tab_selection], apply_rembg=False)
         
-        # 下載按鈕
-        tab_buffer = io.BytesIO()
-        tab_image.save(tab_buffer, format='PNG')
-        tab_buffer.seek(0)
+        with result_col1:
+            st.markdown(f"**🖼️ 主要圖片 (main.png)**")
+            st.caption(f"來源: #{main_selection + 1} | 尺寸: {LINE_MAIN_WIDTH} x {LINE_MAIN_HEIGHT} px")
+            st.image(main_image, use_container_width=True)
+            
+            # 準備下載資料
+            main_buffer = io.BytesIO()
+            main_image.save(main_buffer, format='PNG')
+            main_buffer.seek(0)
+            
+            st.download_button(
+                label="📥 下載 main.png",
+                data=main_buffer.getvalue(),
+                file_name="main.png",
+                mime="image/png",
+                use_container_width=True,
+                key="download_main_from_stickers"
+            )
         
-        st.download_button(
-            label="📥 下載 tab.png",
-            data=tab_buffer.getvalue(),
-            file_name="tab.png",
-            mime="image/png",
-            use_container_width=True,
-            key="download_tab_from_stickers"
-        )
+        with result_col2:
+            st.markdown(f"**💬 聊天室標籤圖片 (tab.png)**")
+            st.caption(f"來源: #{tab_selection + 1} | 尺寸: {LINE_TAB_WIDTH} x {LINE_TAB_HEIGHT} px")
+            st.image(tab_image, use_container_width=True)
+            
+            # 準備下載資料
+            tab_buffer = io.BytesIO()
+            tab_image.save(tab_buffer, format='PNG')
+            tab_buffer.seek(0)
+            
+            st.download_button(
+                label="📥 下載 tab.png",
+                data=tab_buffer.getvalue(),
+                file_name="tab.png",
+                mime="image/png",
+                use_container_width=True,
+                key="download_tab_from_stickers"
+            )
 
 
 if __name__ == "__main__":
     main()
+
 
