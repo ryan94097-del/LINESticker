@@ -25,6 +25,12 @@ LINE_STICKER_MAX_WIDTH = 370   # LINE 貼圖最大寬度
 LINE_STICKER_MAX_HEIGHT = 320  # LINE 貼圖最大高度
 STICKER_MARGIN = 10            # 貼圖四周透明邊距
 
+# LINE 主要圖片與標籤圖片尺寸
+LINE_MAIN_WIDTH = 240          # 主要圖片寬度
+LINE_MAIN_HEIGHT = 240         # 主要圖片高度
+LINE_TAB_WIDTH = 96            # 聊天室標籤圖片寬度
+LINE_TAB_HEIGHT = 74           # 聊天室標籤圖片高度
+
 
 # ============================================================
 # 核心處理函式
@@ -176,6 +182,88 @@ def create_zip_download(stickers: List[Image.Image]) -> bytes:
     return zip_buffer.getvalue()
 
 
+def resize_to_main(image: Image.Image, apply_rembg: bool = True) -> Image.Image:
+    """
+    將圖片調整為主要圖片尺寸 (240 x 240)。
+    圖片會等比例縮放並置中於畫布。
+    
+    Args:
+        image: 原始圖片
+        apply_rembg: 是否執行 rembg 去背
+        
+    Returns:
+        調整後的主要圖片
+    """
+    if apply_rembg:
+        image_nobg = remove(image)
+    else:
+        image_nobg = image.convert('RGBA')
+    
+    canvas_width = LINE_MAIN_WIDTH
+    canvas_height = LINE_MAIN_HEIGHT
+    margin = 5  # 主要圖片邊距較小
+    usable_width = canvas_width - (margin * 2)
+    usable_height = canvas_height - (margin * 2)
+    
+    img_width, img_height = image_nobg.size
+    if img_width == 0 or img_height == 0:
+        return Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 0))
+    
+    scale = min(usable_width / img_width, usable_height / img_height)
+    new_width = max(1, int(img_width * scale))
+    new_height = max(1, int(img_height * scale))
+    
+    resized = image_nobg.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    canvas = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 0))
+    paste_x = (canvas_width - new_width) // 2
+    paste_y = (canvas_height - new_height) // 2
+    canvas.paste(resized, (paste_x, paste_y), resized)
+    
+    return canvas
+
+
+def resize_to_tab(image: Image.Image, apply_rembg: bool = True) -> Image.Image:
+    """
+    將圖片調整為聊天室標籤圖片尺寸 (96 x 74)。
+    圖片會等比例縮放並置中於畫布。
+    
+    Args:
+        image: 原始圖片
+        apply_rembg: 是否執行 rembg 去背
+        
+    Returns:
+        調整後的聊天室標籤圖片
+    """
+    if apply_rembg:
+        image_nobg = remove(image)
+    else:
+        image_nobg = image.convert('RGBA')
+    
+    canvas_width = LINE_TAB_WIDTH
+    canvas_height = LINE_TAB_HEIGHT
+    margin = 3  # 標籤圖片邊距更小
+    usable_width = canvas_width - (margin * 2)
+    usable_height = canvas_height - (margin * 2)
+    
+    img_width, img_height = image_nobg.size
+    if img_width == 0 or img_height == 0:
+        return Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 0))
+    
+    scale = min(usable_width / img_width, usable_height / img_height)
+    new_width = max(1, int(img_width * scale))
+    new_height = max(1, int(img_height * scale))
+    
+    resized = image_nobg.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    canvas = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 0))
+    paste_x = (canvas_width - new_width) // 2
+    paste_y = (canvas_height - new_height) // 2
+    canvas.paste(resized, (paste_x, paste_y), resized)
+    
+    return canvas
+
+
 # ============================================================
 # Streamlit UI
 # ============================================================
@@ -184,69 +272,190 @@ def main():
     """主程式進入點"""
     
     st.set_page_config(
-        page_title="LINE 貼圖分割處理器",
+        page_title="LINE 貼圖處理器",
         page_icon="✂️",
         layout="wide"
     )
     
-    st.title("✂️ LINE 貼圖合集分割處理器")
+    st.title("✂️ LINE 貼圖處理器")
     st.markdown("""
-    上傳一張貼圖合集大圖，自動分割並處理成符合 LINE 規範的格式。
+    上傳圖片，自動處理成符合 LINE 規範的格式。
     """)
     
+    # 使用 tabs 分隔不同功能
+    tab1, tab2 = st.tabs(["📐 貼圖分割", "🖼️ 主要圖片/標籤圖片"])
+    
+    # ========================================
+    # Tab 1: 貼圖分割功能（原有功能）
+    # ========================================
+    with tab1:
+        st.subheader("貼圖合集分割處理")
+        st.caption("將貼圖合集大圖分割成單張貼圖 (370 x 320 px)")
+        
+        st.divider()
+        
+        # 檔案上傳
+        uploaded_file = st.file_uploader(
+            "上傳貼圖合集圖片",
+            type=['png', 'jpg', 'jpeg'],
+            help="支援 PNG、JPG 格式的貼圖合集圖片",
+            key="sticker_uploader"
+        )
+        
+        if uploaded_file is not None:
+            original_image = Image.open(uploaded_file).convert('RGBA')
+            
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.subheader("📷 原始圖片")
+                st.image(original_image, use_container_width=True)
+                st.caption(f"尺寸: {original_image.width} x {original_image.height} px")
+            
+            with col2:
+                st.subheader("⚙️ 分割設定")
+                
+                # 選擇分割模式
+                split_mode = st.radio(
+                    "選擇分割模式",
+                    ["📐 網格分割（推薦）", "🔍 自動偵測"],
+                    help="網格分割適用於整齊排列的貼圖；自動偵測適用於不規則排列"
+                )
+                
+                if "網格分割" in split_mode:
+                    st.info("💡 請輸入貼圖的排列方式（欄數 × 列數）")
+                    
+                    grid_col1, grid_col2 = st.columns(2)
+                    with grid_col1:
+                        cols = st.number_input("欄數（橫向）", min_value=1, max_value=20, value=4)
+                    with grid_col2:
+                        rows = st.number_input("列數（縱向）", min_value=1, max_value=20, value=7)
+                    
+                    total_stickers = cols * rows
+                    st.success(f"預計分割出 **{total_stickers}** 張貼圖")
+                    
+                    apply_rembg = st.checkbox("對每張貼圖執行 AI 去背", value=True, 
+                                              help="勾選後會使用 rembg 移除每張貼圖的背景")
+                    
+                    if st.button("🚀 開始處理", type="primary", use_container_width=True, key="grid_btn"):
+                        process_grid_mode(original_image, cols, rows, apply_rembg)
+                
+                else:
+                    with st.expander("進階參數調整", expanded=False):
+                        dilation_size = st.slider("膨脹核心大小", 5, 50, 20, 5)
+                        min_area_percent = st.slider("最小面積百分比 (%)", 0.1, 5.0, 0.5, 0.1)
+                    
+                    if st.button("🚀 開始處理", type="primary", use_container_width=True, key="auto_btn"):
+                        process_auto_mode(original_image, dilation_size, min_area_percent)
+    
+    # ========================================
+    # Tab 2: 主要圖片/標籤圖片轉換功能（新功能）
+    # ========================================
+    with tab2:
+        st.subheader("主要圖片/聊天室標籤圖片轉換")
+        st.caption("將圖片調整為 LINE 貼圖所需的主要圖片 (main) 或聊天室標籤圖片 (tab) 尺寸")
+        
+        st.divider()
+        
+        # 顯示尺寸說明
+        info_col1, info_col2 = st.columns(2)
+        with info_col1:
+            st.info("🖼️ **主要圖片 (main)**\n\n尺寸：240 x 240 px")
+        with info_col2:
+            st.info("💬 **聊天室標籤圖片 (tab)**\n\n尺寸：96 x 74 px")
+        
+        st.divider()
+        
+        # 檔案上傳
+        uploaded_icon = st.file_uploader(
+            "上傳要轉換的圖片",
+            type=['png', 'jpg', 'jpeg'],
+            help="支援 PNG、JPG 格式的圖片",
+            key="icon_uploader"
+        )
+        
+        if uploaded_icon is not None:
+            icon_image = Image.open(uploaded_icon).convert('RGBA')
+            
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.subheader("📷 原始圖片")
+                st.image(icon_image, use_container_width=True)
+                st.caption(f"尺寸: {icon_image.width} x {icon_image.height} px")
+            
+            with col2:
+                st.subheader("⚙️ 轉換設定")
+                
+                # 選擇輸出類型
+                output_type = st.radio(
+                    "選擇輸出類型",
+                    ["🖼️ 主要圖片 (240 x 240)", "💬 聊天室標籤圖片 (96 x 74)", "📦 兩種都輸出"],
+                    help="選擇要轉換的圖片類型"
+                )
+                
+                apply_rembg_icon = st.checkbox("執行 AI 去背", value=True, 
+                                               help="勾選後會使用 rembg 移除圖片背景",
+                                               key="icon_rembg")
+                
+                if st.button("🚀 開始轉換", type="primary", use_container_width=True, key="icon_btn"):
+                    process_icon_conversion(icon_image, output_type, apply_rembg_icon)
+
+
+def process_icon_conversion(image: Image.Image, output_type: str, apply_rembg: bool):
+    """
+    處理主要圖片/標籤圖片轉換。
+    """
+    progress_container = st.container()
+    
+    with progress_container:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        results = {}
+        
+        if "主要圖片" in output_type or "兩種都輸出" in output_type:
+            status_text.text("⏳ 轉換主要圖片 (240 x 240)...")
+            progress_bar.progress(30)
+            main_image = resize_to_main(image, apply_rembg)
+            results['main'] = main_image
+        
+        if "聊天室標籤" in output_type or "兩種都輸出" in output_type:
+            status_text.text("⏳ 轉換聊天室標籤圖片 (96 x 74)...")
+            progress_bar.progress(60)
+            tab_image = resize_to_tab(image, apply_rembg)
+            results['tab'] = tab_image
+        
+        progress_bar.progress(100)
+        status_text.text("✅ 轉換完成！")
+    
+    # 顯示結果
     st.divider()
+    st.subheader("🎉 轉換結果")
     
-    # 檔案上傳
-    uploaded_file = st.file_uploader(
-        "上傳貼圖合集圖片",
-        type=['png', 'jpg', 'jpeg'],
-        help="支援 PNG、JPG 格式的貼圖合集圖片"
-    )
+    result_cols = st.columns(len(results))
     
-    if uploaded_file is not None:
-        original_image = Image.open(uploaded_file).convert('RGBA')
-        
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.subheader("📷 原始圖片")
-            st.image(original_image, use_container_width=True)
-            st.caption(f"尺寸: {original_image.width} x {original_image.height} px")
-        
-        with col2:
-            st.subheader("⚙️ 分割設定")
-            
-            # 選擇分割模式
-            split_mode = st.radio(
-                "選擇分割模式",
-                ["📐 網格分割（推薦）", "🔍 自動偵測"],
-                help="網格分割適用於整齊排列的貼圖；自動偵測適用於不規則排列"
-            )
-            
-            if "網格分割" in split_mode:
-                st.info("💡 請輸入貼圖的排列方式（欄數 × 列數）")
-                
-                grid_col1, grid_col2 = st.columns(2)
-                with grid_col1:
-                    cols = st.number_input("欄數（橫向）", min_value=1, max_value=20, value=4)
-                with grid_col2:
-                    rows = st.number_input("列數（縱向）", min_value=1, max_value=20, value=7)
-                
-                total_stickers = cols * rows
-                st.success(f"預計分割出 **{total_stickers}** 張貼圖")
-                
-                apply_rembg = st.checkbox("對每張貼圖執行 AI 去背", value=True, 
-                                          help="勾選後會使用 rembg 移除每張貼圖的背景")
-                
-                if st.button("🚀 開始處理", type="primary", use_container_width=True):
-                    process_grid_mode(original_image, cols, rows, apply_rembg)
-            
+    for idx, (key, img) in enumerate(results.items()):
+        with result_cols[idx]:
+            if key == 'main':
+                st.markdown("**🖼️ 主要圖片 (main.png)**")
+                st.caption(f"尺寸: {LINE_MAIN_WIDTH} x {LINE_MAIN_HEIGHT} px")
             else:
-                with st.expander("進階參數調整", expanded=False):
-                    dilation_size = st.slider("膨脹核心大小", 5, 50, 20, 5)
-                    min_area_percent = st.slider("最小面積百分比 (%)", 0.1, 5.0, 0.5, 0.1)
-                
-                if st.button("🚀 開始處理", type="primary", use_container_width=True):
-                    process_auto_mode(original_image, dilation_size, min_area_percent)
+                st.markdown("**💬 聊天室標籤圖片 (tab.png)**")
+                st.caption(f"尺寸: {LINE_TAB_WIDTH} x {LINE_TAB_HEIGHT} px")
+            
+            st.image(img, use_container_width=True)
+            
+            # 下載按鈕
+            img_buffer = io.BytesIO()
+            img.save(img_buffer, format='PNG')
+            img_buffer.seek(0)
+            
+            st.download_button(
+                label=f"📥 下載 {key}.png",
+                data=img_buffer.getvalue(),
+                file_name=f"{key}.png",
+                mime="image/png",
+                use_container_width=True
+            )
 
 
 def process_grid_mode(original_image: Image.Image, cols: int, rows: int, apply_rembg: bool):
