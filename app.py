@@ -7,16 +7,73 @@ LINE 貼圖合集圖片分割處理器
 支援兩種分割模式：
 1. 網格分割模式（推薦）：指定欄數和列數，平均分割圖片
 2. 自動偵測模式：使用 AI 去背 + 輪廓偵測
+
+支援 GPU 加速（需要 CUDA 環境）
 """
 
 import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
-from rembg import remove
+from rembg import remove, new_session
 import io
 import zipfile
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+
+# ============================================================
+# GPU 檢測與 Session 初始化
+# ============================================================
+
+def check_gpu_available() -> bool:
+    """
+    檢查是否有可用的 CUDA GPU。
+    """
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        return 'CUDAExecutionProvider' in providers
+    except Exception:
+        return False
+
+@st.cache_resource
+def get_rembg_session(use_gpu: bool = True):
+    """
+    取得 rembg session，快取以避免重複初始化。
+    使用 u2net 模型進行去背。
+    
+    Args:
+        use_gpu: 是否嘗試使用 GPU
+        
+    Returns:
+        rembg session
+    """
+    try:
+        if use_gpu and check_gpu_available():
+            # 使用 GPU 執行
+            session = new_session("u2net", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+            return session, True
+        else:
+            # 使用 CPU 執行
+            session = new_session("u2net", providers=['CPUExecutionProvider'])
+            return session, False
+    except Exception as e:
+        # 如果失敗，回退到預設模式
+        st.warning(f"⚠️ Session 初始化失敗，使用預設模式: {str(e)}")
+        return None, False
+
+def get_device_info() -> str:
+    """
+    取得目前使用的運算設備資訊。
+    """
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        if 'CUDAExecutionProvider' in providers:
+            return "🚀 GPU (CUDA) 可用"
+        else:
+            return "💻 CPU 模式"
+    except Exception:
+        return "💻 CPU 模式"
 
 # ============================================================
 # 常數設定
@@ -66,11 +123,21 @@ def grid_split(image: Image.Image, cols: int, rows: int) -> List[Image.Image]:
     return cropped_images
 
 
-def remove_background_full(image: Image.Image) -> Image.Image:
+def remove_background_full(image: Image.Image, session=None) -> Image.Image:
     """
     對整張圖片執行 rembg 去背處理。
+    
+    Args:
+        image: 要去背的圖片
+        session: rembg session（如果有的話使用 GPU 加速）
+        
+    Returns:
+        去背後的圖片
     """
-    return remove(image)
+    if session is not None:
+        return remove(image, session=session)
+    else:
+        return remove(image)
 
 
 def find_sticker_contours(image_rgba: Image.Image, 
@@ -128,19 +195,23 @@ def crop_stickers_by_boxes(original_image: Image.Image,
     return cropped_images
 
 
-def process_single_sticker(image: Image.Image, apply_rembg: bool = True) -> Image.Image:
+def process_single_sticker(image: Image.Image, apply_rembg: bool = True, session=None) -> Image.Image:
     """
     處理單張貼圖：去背 + 縮放 + 置中。
     
     Args:
         image: 裁剪後的子圖像
         apply_rembg: 是否執行 rembg 去背
+        session: rembg session（如果有的話使用 GPU 加速）
         
     Returns:
         處理完成的 LINE 規格貼圖
     """
     if apply_rembg:
-        image_nobg = remove(image)
+        if session is not None:
+            image_nobg = remove(image, session=session)
+        else:
+            image_nobg = remove(image)
     else:
         image_nobg = image.convert('RGBA')
     
@@ -281,6 +352,24 @@ def main():
     st.markdown("""
     上傳圖片，自動處理成符合 LINE 規範的格式。
     """)
+    
+    # 顯示設備資訊並初始化 session
+    device_info = get_device_info()
+    
+    # 初始化 rembg session（使用 GPU 如果可用）
+    if 'rembg_session' not in st.session_state:
+        session, using_gpu = get_rembg_session(use_gpu=True)
+        st.session_state['rembg_session'] = session
+        st.session_state['using_gpu'] = using_gpu
+    
+    # 側邊欄顯示系統資訊
+    with st.sidebar:
+        st.subheader("⚙️ 系統資訊")
+        st.info(device_info)
+        if st.session_state.get('using_gpu', False):
+            st.success("✅ 正在使用 GPU 加速")
+        else:
+            st.warning("ℹ️ 使用 CPU 模式")
     
     # 使用 tabs 分隔不同功能
     tab1, tab2 = st.tabs(["📐 貼圖分割", "🖼️ 主要圖片/標籤圖片"])
@@ -496,9 +585,12 @@ def process_grid_mode(original_image: Image.Image, cols: int, rows: int, apply_r
         status_text.text("⏳ 步驟 2/2: 處理每張貼圖...")
         processed_stickers = []
         
+        # 取得 rembg session
+        rembg_session = st.session_state.get('rembg_session', None)
+        
         for i, cropped in enumerate(cropped_images):
             try:
-                processed = process_single_sticker(cropped, apply_rembg)
+                processed = process_single_sticker(cropped, apply_rembg, session=rembg_session)
                 processed_stickers.append(processed)
                 progress = 20 + int((i + 1) / len(cropped_images) * 75)
                 progress_bar.progress(progress)
@@ -527,7 +619,8 @@ def process_auto_mode(original_image: Image.Image, dilation_size: int, min_area_
         progress_bar.progress(10)
         
         try:
-            image_nobg = remove_background_full(original_image)
+            rembg_session = st.session_state.get('rembg_session', None)
+            image_nobg = remove_background_full(original_image, session=rembg_session)
         except Exception as e:
             st.error(f"❌ 去背處理失敗: {str(e)}")
             return None
@@ -550,9 +643,12 @@ def process_auto_mode(original_image: Image.Image, dilation_size: int, min_area_
         status_text.text("⏳ 步驟 3/3: 處理每張貼圖...")
         processed_stickers = []
         
+        # 取得 rembg session
+        rembg_session = st.session_state.get('rembg_session', None)
+        
         for i, cropped in enumerate(cropped_images):
             try:
-                processed = process_single_sticker(cropped, apply_rembg=True)
+                processed = process_single_sticker(cropped, apply_rembg=True, session=rembg_session)
                 processed_stickers.append(processed)
                 progress = 40 + int((i + 1) / len(cropped_images) * 55)
                 progress_bar.progress(progress)
